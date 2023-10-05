@@ -11,5 +11,6 @@ path = "src/main.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-pg-peek-lib = { path = "../pg-peek-lib" }
-
+pg-peek-lib = { path = "../pg-peek-lib"}
+anyhow = "1"
+clap = { version = "4", features = ["derive"]}
