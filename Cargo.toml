@@ -1,0 +1,4 @@
+[workspace]
+members = ["pg-peek", "pg-peek-lib"]
+resolver = "2"
+
