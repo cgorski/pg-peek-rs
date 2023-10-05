@@ -1,6 +1,6 @@
 use bitflags::{bitflags, Flags};
-use byteorder::{LittleEndian, ReadBytesExt};
-use std::fs::File;
+use byteorder::{ReadBytesExt};
+
 use std::io::{self, Read};
 
 #[derive(Clone, Copy)]

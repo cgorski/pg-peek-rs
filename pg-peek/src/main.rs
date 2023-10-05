@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use pg_peek_lib::{get_system_endianness, read_all_pages, read_page_header};
+use pg_peek_lib::{get_system_endianness, read_all_pages};
 use std::fs::File;
 
 #[derive(Parser, Debug)]
