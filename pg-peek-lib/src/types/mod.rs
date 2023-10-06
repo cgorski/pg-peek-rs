@@ -1,10 +1,10 @@
 use bitflags::bitflags;
 use lazy_static::lazy_static;
-use regex::Regex;
+
 use serde::{Deserialize, Serialize};
 use serde_json;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
+
+use std::io::{BufRead};
 use std::ops::Deref;
 use std::str::FromStr;
 use strum_macros::{Display, EnumString};
@@ -231,7 +231,7 @@ fn json_to_pg_type(json_string: &str) -> Result<PgType, serde_json::Error> {
         collation: Some(Oid(intermediate.typcollation)),
         default_binary: intermediate.typdefaultbin,
         default: intermediate.typdefault,
-        acl: intermediate.typacl.unwrap_or_else(Vec::new),
+        acl: intermediate.typacl.unwrap_or_default(),
     };
 
     Ok(pg_type)
