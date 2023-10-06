@@ -1,14 +1,18 @@
+pub mod types;
+
 use bitflags::Flags;
 use byteorder::ReadBytesExt;
-
 use std::io::{self, Read};
+use std::ops::Deref;
 
+/// Enum representing the possible byte order (endianness) of a system.
 #[derive(Clone, Copy)]
 pub enum Endianness {
     LittleEndian,
     BigEndian,
 }
 
+/// Returns the system's endianness.
 pub fn get_system_endianness() -> Endianness {
     if cfg!(target_endian = "little") {
         Endianness::LittleEndian
@@ -40,19 +44,68 @@ fn read_u64<R: Read>(reader: &mut R, endianness: Endianness) -> io::Result<u64> 
     }
 }
 
-// Basic types
+/// Represents a pointer to a location in the PostgreSQL write-ahead log.
 #[derive(Debug)]
 pub struct PageXLogRecPtr(u64);
+
+/// Represents a unique identifier for a PostgreSQL transaction.
 #[derive(Debug)]
 pub struct TransactionId(u32);
+
+/// Represents a command identifier within a PostgreSQL transaction.
 #[derive(Debug)]
 pub struct CommandId(u32);
+
+/// Represents an index into a specific location on a PostgreSQL page.
 #[derive(Debug)]
 pub struct LocationIndex(u16);
+
+/// Represents a pointer to a specific item within a PostgreSQL page.
 #[derive(Debug)]
 pub struct ItemPointerData([u8; 6]);
 
+impl Deref for PageXLogRecPtr {
+    type Target = u64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Deref for TransactionId {
+    type Target = u32;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Deref for CommandId {
+    type Target = u32;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Deref for LocationIndex {
+    type Target = u16;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Deref for ItemPointerData {
+    type Target = [u8; 6];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 bitflags! {
+    /// Flags representing the status and properties of a PostgreSQL page.
     #[derive(Debug)]
     pub struct PageFlags: u16 {
         const PD_HAS_FREE_LINES  = 0x0001;
@@ -61,21 +114,29 @@ bitflags! {
     }
 }
 
+/// Represents the header data for a PostgreSQL page.
 #[derive(Debug)]
 pub struct PageHeaderData {
+    /// Log sequence number: identifies a position in the PostgreSQL write-ahead log.
     pd_lsn: PageXLogRecPtr,
+    /// Optional checksum for the page.
     pd_checksum: u16,
+    /// Flags providing info about the status and properties of the page.
     pd_flags: PageFlags,
+    /// Offset to the start of the free space in the page.
     pd_lower: LocationIndex,
+    /// Offset to the end of the free space in the page.
     pd_upper: LocationIndex,
+    /// Offset to the beginning of the special space at the end of the page.
     pd_special: LocationIndex,
+    /// Encodes the page version and the size of the page.
     pd_pagesize_version: u16,
+    /// The oldest unpruned transaction ID on the page.
     pd_prune_xid: TransactionId,
 }
 
-// ItemIdData structure
-
 bitflags! {
+    /// Flags representing the status and type of a PostgreSQL item.
     #[derive(Debug, PartialEq)]
     pub struct LPFlags: u8 {
         const LP_UNUSED   = 0x00;
@@ -85,10 +146,14 @@ bitflags! {
     }
 }
 
+/// Represents the data for an item on a PostgreSQL page.
 #[derive(Debug)]
 pub struct ItemIdData {
+    /// Offset to the item's data.
     lp_off: u16,
+    /// Flags providing info about the status and type of the item.
     lp_flags: LPFlags,
+    /// Length of the item.
     lp_len: u16,
 }
 
@@ -109,19 +174,6 @@ impl ItemIdData {
         })
     }
 }
-
-// HeapTupleHeaderData structure
-// #[derive(Debug)]
-// pub struct HeapTupleHeaderData {
-//     t_xmin: TransactionId,
-//     t_xmax: TransactionId,
-//     t_cid: CommandId,
-//     t_xvac: TransactionId,
-//     t_ctid: ItemPointerData,
-//     t_infomask2: u16,
-//     t_infomask: u16,
-//     t_hoff: u8,
-// }
 
 // Varlena structure
 #[derive(Debug)]
@@ -158,9 +210,39 @@ pub struct TableRow {
 pub struct PageLayout {
     header: PageHeaderData,
     item_identifiers: Vec<ItemIdData>,
-    free_space: Vec<u8>,
     items: Vec<HeapTuple>,
     special_space: Option<SpecialSection>,
+}
+
+impl PageLayout {
+    pub fn from_reader<R: Read>(reader: &mut R, endianness: Endianness) -> io::Result<PageLayout> {
+        let header = read_page_header(reader, endianness)?;
+        let item_identifiers = read_item_identifiers(reader, &header, endianness)?;
+
+        // Read HeapTuples for each item identifier
+        let mut items = Vec::new();
+        for item_id in &item_identifiers {
+            if item_id.lp_flags == LPFlags::LP_NORMAL {
+                let tuple_length = item_id.lp_len as u32; // Assuming lp_len is the length including the header
+                let tuple = HeapTuple::from_reader(reader, tuple_length, endianness)?;
+                items.push(tuple);
+            } else {
+                // Skip non-NORMAL items based on their length
+                let mut buffer = vec![0u8; item_id.lp_len as usize];
+                reader.read_exact(&mut buffer)?;
+            }
+        }
+
+        // Handle special space (assuming you have the logic for this)
+        let special_space = None; // Placeholder, adjust as needed
+
+        Ok(PageLayout {
+            header,
+            item_identifiers,
+            items,
+            special_space,
+        })
+    }
 }
 
 // Table structure
@@ -206,7 +288,7 @@ pub fn read_item_identifiers<R: Read>(
     header: &PageHeaderData,
     endianness: Endianness,
 ) -> io::Result<Vec<ItemIdData>> {
-    let num_identifiers = (header.pd_lower.0 as usize - std::mem::size_of::<PageHeaderData>()) / 4; // assuming 4 bytes per ItemIdData
+    let num_identifiers = (*header.pd_lower as usize - std::mem::size_of::<PageHeaderData>()) / 4; // assuming 4 bytes per ItemIdData
 
     let mut item_identifiers = Vec::with_capacity(num_identifiers);
 
@@ -238,35 +320,7 @@ pub fn read_all_pages<R: Read>(
         }
 
         let mut cursor = io::Cursor::new(&buffer);
-        let header = read_page_header(&mut cursor, endianness)?;
-        let item_identifiers = read_item_identifiers(&mut cursor, &header, endianness)?;
-
-        // Read HeapTuples for each item identifier
-        let mut items = Vec::new();
-        for item_id in &item_identifiers {
-            if item_id.lp_flags == LPFlags::LP_NORMAL {
-                let tuple_length = item_id.lp_len as u32; // Assuming lp_len is the length including the header
-                let tuple = HeapTuple::from_reader(&mut cursor, tuple_length, endianness)?;
-                items.push(tuple);
-            } else {
-                // Skip non-NORMAL items based on their length
-                cursor.set_position(cursor.position() + item_id.lp_len as u64);
-            }
-        }
-
-        // We will calculate the free space based on where the cursor is positioned
-        let remaining_bytes = DEFAULT_POSTGRES_PAGE_SIZE as u64 - cursor.position();
-        let mut free_space = vec![0u8; remaining_bytes as usize];
-        cursor.read_exact(&mut free_space)?;
-
-        let page_layout = PageLayout {
-            header,
-            item_identifiers,
-            free_space,
-            items,
-            special_space: None, // Placeholder, adjust as needed
-        };
-
+        let page_layout = PageLayout::from_reader(&mut cursor, endianness)?;
         pages.push(page_layout);
     }
 
